@@ -8,8 +8,6 @@ import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.es.SpanishAnalyzer;
-import org.apache.lucene.analysis.standard.StandardAnalyzer;
-import org.apache.lucene.analysis.core.SimpleAnalyzer;
 
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.MMapDirectory;
@@ -22,76 +20,74 @@ import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TopDocs;
 
 
-import java.util.ArrayList;
-import java.util.Collection;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.FileInputStream;
-import java.io.FileReader;
 import java.io.InputStreamReader;
 import java.nio.file.Paths;
 import java.io.BufferedReader;
+import java.io.File;
 
 
 /**
- * Clase de ejemplo de un indexador y buscador usando Lucene
- * @author sisinf
+ * Clase de un indexador y buscador usando Lucene
+ * @author Andrés Gavín Murillo
+ * @author Eduardo Gimeno Soriano
+ * @author Sergio Álvarez Peiro
  *
  */
-public class IndexadorYBuscador{
+public class IndexadorYBuscador {
+	
+	private IndexWriter indice = null;
+	
+	private Directory directorioDelIndiceCreado = null;
 
 	/**
-	 * Relación de ficheros a indexar / buscar
-	 */
-	private Collection <String> ficherosAIndexar = new ArrayList<String>();
-	/**
-	 * Relación de palabras clave a buscar
-	 */
-	private Collection <String> queries = new ArrayList <String>();
-	/**
-	 * Analizar utilizado por el indexador / buscador 
+	 * Analizador utilizado por el indexador / buscador 
 	 */
 	private Analyzer analizador;
-	
-	private final static String INDEXDIR = "./ficheros/indice";
 	
 	
 
 	/**
 	 * Constructor parametrizado
-	 * @param ficherosAIndexar Colección de ficheros a indexar
-	 * @param queries Colección de palabras a buscar
+	 * @param ficherosAIndexar Directorio a indexar
+	 * @throws IOException 
 	 */
-	public IndexadorYBuscador(Collection<String> ficherosAIndexar, Collection<String> queries){
-		this.ficherosAIndexar = ficherosAIndexar;
-		this.queries = queries;
-		
-		analizador = new SimpleAnalyzer();
-
-/*		try {
-			FileReader reader = new FileReader("./ficheros/stopwords.txt");
-			analizador = new StandardAnalyzer(reader);
-		} catch (Exception e) {
-			System.out.println("Error leyendo fichero de Stop Words. Usando valor por defecto");
-			analizador = new StandardAnalyzer();
-		} 
-*/
-		//analizador = new SpanishAnalyzer();
-
+	public IndexadorYBuscador() throws IOException {
+		this.analizador = new SpanishAnalyzer();
+		this.directorioDelIndiceCreado = crearIndiceEnUnDirectorio();
+	}
 	
+	/**
+	 * Elimina el índice
+	 * @throws IOException
+	 */
+	public void eliminarIndice() throws IOException {
+		indice.deleteAll();
+		indice.close();
+		
+		for (String s : directorioDelIndiceCreado.listAll())
+			directorioDelIndiceCreado.deleteFile(s);
+		directorioDelIndiceCreado.close();
 	}
 	
 	
 	
 	/**
 	 * Añade un fichero al índice
-	 * @param indice Indice que estamos construyendo
 	 * @param path ruta del fichero a indexar
 	 * @throws IOException
 	 */
-	private void anhadirFichero(IndexWriter indice, String path) 
+	private void anhadirFichero(String path) 
 	throws IOException {
-		InputStream inputStream = new FileInputStream(path);
+		File file = new File(path);
+	    if (!file.exists() || !file.canRead()) {
+	      System.out.println("El fichero '" + path + "' no existe o no se puede leer");
+	      return;
+	    }
+	    
+		InputStream inputStream = new FileInputStream(file);
 		BufferedReader inputStreamReader = new BufferedReader(
 				new InputStreamReader(inputStream,"UTF-8"));
 		
@@ -99,28 +95,53 @@ public class IndexadorYBuscador{
 		doc.add(new TextField("contenido", inputStreamReader));
 		doc.add(new StringField("path", path, Field.Store.YES));
 		indice.addDocument(doc);
+		indice.commit();
 	}
 	
 	
 	
 	/**
-	 * Indexa los ficheros incluidos en "ficherosAIndexar"
-	 * @return un índice (Directory) en memoria, con los índices de los ficheros
+	 * Añade un directorio al índice
+	 * @param path ruta del directorio a indexar
 	 * @throws IOException
 	 */
-	private Directory crearIndiceEnUnDirectorio() throws IOException{
-		IndexWriter indice = null;
-		Directory directorioAlmacenarIndice = new MMapDirectory(Paths.get(INDEXDIR));
+	private void anhadirDirectorio(String path) 
+	throws IOException {
+		if (!path.endsWith("/"))
+			path += "/";
+		
+		File docDir = new File(path);
+	    if (!docDir.exists() || !docDir.canRead()) {
+	      System.out.println("El directorio '" + path + "' no existe o no se puede leer");
+	      return;
+	    }
+	    
+	    String[] documentos = docDir.list();
+        if (documentos != null)
+        	for (String doc : documentos) {
+        		if (new File(path + doc).isDirectory())
+        			anhadirDirectorio(path + doc);
+        		else
+            		anhadirFichero(path + doc);
+        	}
+	}
+	
+	
+	
+	/**
+	 * Crea el índice vacío en "directorioAIndexar"
+	 * @return un índice (Directory) en memoria
+	 * @throws IOException
+	 */
+	private Directory crearIndiceEnUnDirectorio() throws IOException {
+		String indexDir = "indice";
+		
+		Directory directorioAlmacenarIndice = new MMapDirectory(Paths.get(indexDir));
 
 		IndexWriterConfig configuracionIndice = new IndexWriterConfig(analizador);
 
 		indice = new IndexWriter(directorioAlmacenarIndice, configuracionIndice);
 		
-		for (String fichero : ficherosAIndexar) {
-			anhadirFichero(indice, fichero);
-		}
-		
-		indice.close();
 		return directorioAlmacenarIndice;
 	}
 	
@@ -128,26 +149,21 @@ public class IndexadorYBuscador{
 	
 	/**
 	 * Busca la palabra indicada en queryAsString en el directorioDelIndice.
-	 * @param directorioDelIndice
-	 * @param paginas
 	 * @param hitsPorPagina
 	 * @param queryAsString
 	 * @throws IOException
 	 */
-	private void buscarQueryEnIndice(Directory directorioDelIndice, 
-										int paginas, 
-										int hitsPorPagina, 
-										String queryAsString)
+	private void buscarQueryEnIndice(int hitsPorPagina, String queryAsString)
 	throws IOException{
 
-		DirectoryReader directoryReader = DirectoryReader.open(directorioDelIndice);
+		DirectoryReader directoryReader = DirectoryReader.open(directorioDelIndiceCreado);
 		IndexSearcher buscador = new IndexSearcher(directoryReader);
 		
 		QueryParser queryParser = new QueryParser("contenido", analizador); 
 		Query query = null;
 		try{
 			query = queryParser.parse(queryAsString);
-			TopDocs resultado = buscador.search(query, paginas * hitsPorPagina);
+			TopDocs resultado = buscador.search(query, indice.numDocs() * hitsPorPagina);
 			ScoreDoc[] hits = resultado.scoreDocs;
 		      
 			System.out.println("\nBuscando " + queryAsString + ": Encontrados " + hits.length + " hits.");
@@ -167,61 +183,52 @@ public class IndexadorYBuscador{
 	
 	
 	/**
-	 * Ejecuta en el índice una búsqueda por cada una de las palabras clave solicitadas. <p>
-	 * Las palabras clave solicitadas están en la propiedad global "queries". 
-	 * @param directorioDelIndice índice
-	 * @param paginas 
-	 * @param hitsPorPagina
-	 * @throws IOException
-	 */
-	private void buscarQueries(Directory directorioDelIndice, int paginas, int hitsPorPagina)
-	throws IOException{
-		for (String palabra : queries) {
-			buscarQueryEnIndice(directorioDelIndice, 
-								paginas, 
-								hitsPorPagina, 
-								palabra);			
-		}
-	}
-	
-	
-	
-	/**
-	 * Programa principal de prueba. Rellena las colecciones "ficheros" y "queries"
+	 * Programa principal
 	 * @param args
 	 * @throws IOException
 	 */
 	public static void main(String[]args) throws IOException{
-		// Establecemos la lista de ficheros a indexar
-		Collection <String> ficheros = new ArrayList <String>();
-		ficheros.add("./ficheros/uno.txt");
-		ficheros.add("./ficheros/dos.txt");
-		ficheros.add("./ficheros/tres.txt");
-		ficheros.add("./ficheros/cuatro.txt");
-
-		// Establecemos las palabras clave a utilizar en la búsqueda
-		Collection <String> queries = new ArrayList <String>();
-		queries.add("Contaminación");
-		queries.add("cambio climatico");
-		queries.add("cambio climático");
-		queries.add("cambio");
-		queries.add("climatico");
-		queries.add("por");
-		queries.add("aeropuerto");
-
-		// Creamos el idexador / buscador
-		IndexadorYBuscador ejemplo = new IndexadorYBuscador(ficheros, queries);
-
-		// Indexamos los ficheros
-		Directory directorioDelIndiceCreado = ejemplo.crearIndiceEnUnDirectorio();
+		final String ayuda = "1.- Indexar un directorio\n"
+				+ "2.- Añadir un documento al índice\n"
+				+ "3.- Buscar término\n"
+				+ "4.- Salir\n";
+		boolean fin = false;
+		BufferedReader in = new BufferedReader(new InputStreamReader(System.in, "UTF-8"));
+		IndexadorYBuscador indexador = new IndexadorYBuscador();
 		
-		// Abrimos un ficher indexado previamente
-		//Directory directorioDelIndiceCreado = MMapDirectory.open(Paths.get(INDEXDIR));
-		
-		// Ejecutamos la búsqueda de las palabras clave
-		ejemplo.buscarQueries(directorioDelIndiceCreado, ficheros.size(), 1);
+		while (!fin) {
+			System.out.print(ayuda);
+			String entrada = in.readLine();
+			if (entrada == null || entrada.length() == -1) {
+				break;
+			}
+			entrada = entrada.trim();
+			if (entrada.length() == 0) {
+				break;
+			}
+			
+			if (entrada.charAt(0) == '1') {
+				System.out.println("Introduzca la ruta de un directorio a indexar: ");
+				String directorio = in.readLine();
+				indexador.anhadirDirectorio(directorio);
+			}
+			else if (entrada.charAt(0) == '2') {
+				System.out.println("Introduzca el nombre de un documento a indexar: ");
+				String doc = in.readLine();
+				indexador.anhadirFichero(doc);
+			}
+			else if (entrada.charAt(0) == '3') {
+				System.out.println("Introduzca el término a buscar: ");
+				String term = in.readLine();
+				indexador.buscarQueryEnIndice(1, term);
+				System.out.println();
+			}
+			else if (entrada.charAt(0) == '4') {
+				indexador.eliminarIndice();
+				fin = true;
+			}
+		}
 	}
-	
 }
 
 
